@@ -1,19 +1,31 @@
 package local.dev.llm_bedrock_test.rest;
 
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.constraints.NotBlank;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.*;
+import local.dev.llm_bedrock_test.service.LlmService;
 
 @RestController
 @RequestMapping("/api")
+@Validated
 public class ChatController {
 
-    public record ChatRequest(String sessionId, String message) {}
+    private final LlmService llmService;
+
+    public ChatController(LlmService llmService) {
+        this.llmService = llmService;
+    }
+
+    public record ChatRequest(
+            @NotBlank String sessionId,
+            @NotBlank String message
+    ) {}
+
     public record ChatResponse(String reply) {}
 
     @PostMapping("/chat")
-    public ChatResponse chat(@RequestBody ChatRequest req) {
-        return new ChatResponse("Echo: " + req.message() + " (session=" + req.sessionId() + ")");
+    public ChatResponse chat(@RequestBody @Validated ChatRequest req) {
+        String reply = llmService.chat(req.sessionId(), req.message());
+        return new ChatResponse(reply);
     }
 }

@@ -1,6 +1,7 @@
 package local.dev.llm_bedrock_test.config;
 
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -12,9 +13,12 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 public class BedrockConfig {
 
     @Bean
-    public BedrockRuntimeClient bedrockClient() {
+    public BedrockRuntimeClient bedrockRuntimeClient(
+            @Value("${bedrock.region:eu-central-1}") String region
+    ) {
         return BedrockRuntimeClient.builder()
-                .region(Region.EU_CENTRAL_1)
+                .region(Region.of(region))
+                // Uses AWS_PROFILE / default chain (works with your "personal" profile)
                 .credentialsProvider(DefaultCredentialsProvider.create())
                 .build();
     }
