@@ -2,6 +2,7 @@ package local.dev.llm_bedrock_test.lending.tools;
 
 import local.dev.llm_bedrock_test.lending.ApplicationDraft;
 import local.dev.llm_bedrock_test.lending.DraftStore;
+import local.dev.llm_bedrock_test.lending.LendingStepPolicy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.core.document.Document;
@@ -23,9 +24,9 @@ class LendingToolExecutorTest {
     @BeforeEach
     void setup() {
         store = new DraftStore();
-        exec = new LendingToolExecutor(store);
+        LendingStepPolicy stepPolicy = new LendingStepPolicy();
+        exec = new LendingToolExecutor(store, stepPolicy);
     }
-
     @Test
     void updatePersonal_whenAllPersonalProvided_movesToBusinessDetails() {
         String sessionId = "s1";

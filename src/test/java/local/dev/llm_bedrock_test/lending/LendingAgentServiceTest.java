@@ -34,12 +34,16 @@ class LendingAgentServiceTest {
         LendingToolRegistry registry = new LendingToolRegistry();
 //        LendingToolExecutor executor = new LendingToolExecutor(store);
         ToolRunner toolRunner =  mock(ToolRunner.class);
+        LendingStepPolicy stepPolicy = new LendingStepPolicy();
+        LendingStateReducer reducer = new LendingStateReducer();
 
         LendingAgentService agent = new LendingAgentService(
                 bedrock,
                 "dummy-model",
                 registry,
                 toolRunner,
+                reducer,
+                stepPolicy,
                 store
         );
 
@@ -79,6 +83,7 @@ class LendingAgentServiceTest {
         when(bedrock.converse(ArgumentMatchers.any(java.util.function.Consumer.class)))
                 .thenReturn(first)
                 .thenReturn(second);
+
 
         String reply = agent.chat("s1", "Hi, I need a business loan. My name is Razvan Nicolae, email razvan@test.com");
 

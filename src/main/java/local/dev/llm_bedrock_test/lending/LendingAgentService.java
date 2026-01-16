@@ -20,7 +20,9 @@ public class LendingAgentService {
     private final String modelId;
     private final LendingToolRegistry toolRegistry;
     private final ToolRunner toolRunner;
-    //private final LendingToolExecutor toolExecutor;
+    private final LendingStateReducer reducer;
+    //private final LendingToolExecutor toolExecutor; - used for local tools
+    private final LendingStepPolicy stepPolicy;
     private final DraftStore store;
 
     public LendingAgentService(
@@ -29,12 +31,16 @@ public class LendingAgentService {
             LendingToolRegistry toolRegistry,
             //            LendingToolExecutor toolExecutor,
             ToolRunner toolRunner,
+            LendingStateReducer reducer,
+            LendingStepPolicy stepPolicy,
             DraftStore store
     ) {
         this.bedrock = bedrock;
         this.modelId = modelId;
         this.toolRegistry = toolRegistry;
         this.toolRunner = toolRunner;
+        this.reducer = reducer;
+        this.stepPolicy = stepPolicy;
         this.store = store;
     }
 
@@ -82,10 +88,21 @@ public class LendingAgentService {
                 String toolUseId = toolUse.toolUseId();
                 Document input = toolUse.input();
 
+                System.out.println("TOOL_USE: " + toolName + " input=" + input);
+                System.out.println("DRAFT BEFORE: step=" + draft.getStep() + " fields=" + contextBlock(sessionId, draft));
+
                 Document output = toolRunner.run(toolName, input);
+
+                //adjust state information in the application draft
+                mirrorStateIntoSpring(toolName, input);
 
                 // refresh draft after tool updates (local store may not change if tool is remote)
                 draft = store.getOrCreate(sessionId);
+
+                // advance step based on updated draft
+                reducer.advanceStepIfPossible(draft);
+
+                System.out.println("DRAFT AFTER: step=" + draft.getStep() + " fields=" + contextBlock(sessionId, draft));
 
                 messages.add(toolResultMsg(toolUseId, output));
             }
@@ -174,4 +191,58 @@ public class LendingAgentService {
             return ToolResultStatus.SUCCESS;
         }
     }
+
+    private void mirrorStateIntoSpring(String toolName, Document input) {
+        if (input == null || !input.isMap()) return;
+        var m = input.asMap();
+        String sessionId = getString(m, "sessionId");
+        if (sessionId == null) return;
+
+        ApplicationDraft d = store.getOrCreate(sessionId);
+        if (!stepPolicy.isToolAllowed(d.getStep(), toolName)) {
+            // Strict: do not apply changes to state if tool out of order
+            return;
+        }
+
+        switch (toolName) {
+            case LendingToolRegistry.UPDATE_PERSONAL -> {
+                String firstName = getString(m, "firstName");
+                String lastName = getString(m, "lastName");
+                String email = getString(m, "email");
+                if (firstName != null) d.setFirstName(firstName);
+                if (lastName != null) d.setLastName(lastName);
+                if (email != null) d.setEmail(email);
+            }
+            case LendingToolRegistry.UPDATE_BUSINESS -> {
+                String companyName = getString(m, "companyName");
+                String registrationId = getString(m, "registrationId");
+                if (companyName != null) d.setCompanyName(companyName);
+                if (registrationId != null) d.setRegistrationId(registrationId);
+            }
+            case LendingToolRegistry.UPDATE_FINANCIALS -> {
+                if (m.get("requestedAmount") != null && m.get("requestedAmount").isNumber()) {
+                    d.setRequestedAmount(new java.math.BigDecimal(m.get("requestedAmount").asNumber().toString()));
+                }
+                if (m.get("termMonths") != null && m.get("termMonths").isNumber()) {
+                    d.setTermMonths((int) m.get("termMonths").asNumber().longValue());
+                }
+                if (m.get("monthlyRevenue") != null && m.get("monthlyRevenue").isNumber()) {
+                    d.setMonthlyRevenue(new java.math.BigDecimal(m.get("monthlyRevenue").asNumber().toString()));
+                }
+            }
+            case LendingToolRegistry.SUBMIT -> {
+                // optional: mark submitted locally too
+                d.setStep(ApplicationDraft.Step.SUBMITTED);
+            }
+            default -> {
+                // do nothing
+            }
+        }
+    }
+
+    private String getString(java.util.Map<String, Document> m, String key) {
+        Document v = m.get(key);
+        return (v != null && v.isString()) ? v.asString() : null;
+    }
+
 }

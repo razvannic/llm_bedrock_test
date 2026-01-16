@@ -2,6 +2,7 @@ package local.dev.llm_bedrock_test.lending.tools;
 
 import local.dev.llm_bedrock_test.lending.ApplicationDraft;
 import local.dev.llm_bedrock_test.lending.DraftStore;
+import local.dev.llm_bedrock_test.lending.LendingStepPolicy;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.document.Document;
 
@@ -15,9 +16,11 @@ import java.util.Set;
 public class LendingToolExecutor {
 
     private final DraftStore store;
+    private final LendingStepPolicy stepPolicy;
 
-    public LendingToolExecutor(DraftStore store) {
+    public LendingToolExecutor(DraftStore store, LendingStepPolicy stepPolicy) {
         this.store = store;
+        this.stepPolicy = stepPolicy;
     }
 
     public Document execute(String toolName, Document input) {
@@ -30,13 +33,13 @@ public class LendingToolExecutor {
 
         ApplicationDraft draft = store.getOrCreate(sessionId);
 
-        // STRICT STEP GUARD
-        if (!isToolAllowed(draft.getStep(), toolName)) {
+        // STRICT STEP GUARD - “reference” implementation for local mode - can be removed if we remove local mode completely
+        if (!stepPolicy.isToolAllowed(draft.getStep(), toolName)) {
             return error(
                     "STEP_VIOLATION",
                     "Tool '" + toolName + "' is not allowed in step " + draft.getStep(),
                     draft.getStep().name(),
-                    allowedToolsForStep(draft.getStep())
+                    stepPolicy.allowedToolsForStep(draft.getStep())
             );
         }
 
@@ -50,21 +53,6 @@ public class LendingToolExecutor {
                     .putString("status", "ERROR")
                     .putString("message", "Unknown tool: " + toolName)
                     .build();
-        };
-    }
-
-    private boolean isToolAllowed(ApplicationDraft.Step step, String toolName) {
-        return allowedToolsForStep(step).contains(toolName);
-    }
-
-    private Set<String> allowedToolsForStep(ApplicationDraft.Step step) {
-        // Always allow status
-        return switch (step) {
-            case START, PERSONAL_DETAILS -> Set.of(LendingToolRegistry.GET_STATUS, LendingToolRegistry.UPDATE_PERSONAL);
-            case BUSINESS_DETAILS -> Set.of(LendingToolRegistry.GET_STATUS, LendingToolRegistry.UPDATE_BUSINESS);
-            case FINANCIALS -> Set.of(LendingToolRegistry.GET_STATUS, LendingToolRegistry.UPDATE_FINANCIALS);
-            case REVIEW_SUBMIT -> Set.of(LendingToolRegistry.GET_STATUS, LendingToolRegistry.SUBMIT);
-            case SUBMITTED -> Set.of(LendingToolRegistry.GET_STATUS);
         };
     }
 
