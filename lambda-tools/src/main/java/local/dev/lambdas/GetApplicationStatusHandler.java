@@ -10,6 +10,10 @@ public class GetApplicationStatusHandler {
     public Map<String, Object> handleRequest(Map<String, Object> event) {
         // Expected input from Spring:
         // { "toolName": "...", "input": { "sessionId": "..." } }
+        System.out.println("GetApplicationStatusHandler invoked");
+        System.out.println("Event: " + event);
+        System.out.println("CDK_DEPLOY_MARKER=v1");
+
 
         Map<String, Object> input =
                 (Map<String, Object>) event.getOrDefault("input", Map.of());
