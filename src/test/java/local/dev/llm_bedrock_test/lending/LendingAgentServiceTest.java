@@ -32,13 +32,14 @@ class LendingAgentServiceTest {
 
         DraftStore store = new DraftStore();
         LendingToolRegistry registry = new LendingToolRegistry();
-        LendingToolExecutor executor = new LendingToolExecutor(store);
+//        LendingToolExecutor executor = new LendingToolExecutor(store);
+        ToolRunner toolRunner =  mock(ToolRunner.class);
 
         LendingAgentService agent = new LendingAgentService(
                 bedrock,
                 "dummy-model",
                 registry,
-                executor,
+                toolRunner,
                 store
         );
 

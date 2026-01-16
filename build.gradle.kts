@@ -50,6 +50,7 @@ dependencies {
 	/* ---------------- Kotlin ---------------- */
 	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
+	implementation("software.amazon.awssdk:lambda")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-validation-test")

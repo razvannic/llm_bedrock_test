@@ -1,7 +1,7 @@
 package local.dev.llm_bedrock_test.lending;
 
-import local.dev.llm_bedrock_test.lending.tools.LendingToolExecutor;
 import local.dev.llm_bedrock_test.lending.tools.LendingToolRegistry;
+import local.dev.llm_bedrock_test.lending.tools.ToolRunner;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.document.Document;
@@ -10,6 +10,7 @@ import software.amazon.awssdk.services.bedrockruntime.model.*;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 @Service
@@ -18,44 +19,37 @@ public class LendingAgentService {
     private final BedrockRuntimeClient bedrock;
     private final String modelId;
     private final LendingToolRegistry toolRegistry;
-    private final LendingToolExecutor toolExecutor;
+    private final ToolRunner toolRunner;
+    //private final LendingToolExecutor toolExecutor;
     private final DraftStore store;
 
     public LendingAgentService(
             BedrockRuntimeClient bedrock,
             @Value("${bedrock.modelId}") String modelId,
             LendingToolRegistry toolRegistry,
-            LendingToolExecutor toolExecutor,
+            //            LendingToolExecutor toolExecutor,
+            ToolRunner toolRunner,
             DraftStore store
     ) {
         this.bedrock = bedrock;
         this.modelId = modelId;
         this.toolRegistry = toolRegistry;
-        this.toolExecutor = toolExecutor;
+        this.toolRunner = toolRunner;
         this.store = store;
     }
 
     public String chat(String sessionId, String userMessage) {
         ApplicationDraft draft = store.getOrCreate(sessionId);
 
-        // 1) Build conversation messages (for now: just user + tool results).
-        // Later you can persist history per session.
         List<Message> messages = new ArrayList<>();
         messages.add(userMsg(userMessage));
 
-        // 2) System prompt and context
-        SystemContentBlock system = SystemContentBlock.fromText(systemPrompt());
-        // We pass state as an extra "system-like" instruction via another system block or preface.
-        // Simplest: include it in system prompt string. (Works fine for a spike.)
-        // If you prefer: add another SystemContentBlock with context.
-
-        // 3) Tool config
         ToolConfiguration toolConfig = ToolConfiguration.builder()
                 .tools(toolRegistry.tools())
                 .toolChoice(ToolChoice.fromAuto(AutoToolChoice.builder().build()))
                 .build();
 
-        int maxTurns = 5; // prevent infinite loops
+        int maxTurns = 5;
 
         for (int i = 0; i < maxTurns; i++) {
             String context = contextBlock(sessionId, draft);
@@ -72,7 +66,6 @@ public class LendingAgentService {
             messages.add(assistant);
 
             if (res.stopReason() != StopReason.TOOL_USE) {
-                // Return first text block (good enough for now)
                 return assistant.content().stream()
                         .map(ContentBlock::text)
                         .filter(Objects::nonNull)
@@ -80,21 +73,20 @@ public class LendingAgentService {
                         .orElse("(no text)");
             }
 
-            // TOOL_USE: execute each tool request and send tool results back
+            // TOOL_USE: execute each tool request
             for (ContentBlock block : assistant.content()) {
                 if (block.toolUse() == null) continue;
-                ToolUseBlock toolUse = block.toolUse();
 
+                ToolUseBlock toolUse = block.toolUse();
                 String toolName = toolUse.name();
                 String toolUseId = toolUse.toolUseId();
                 Document input = toolUse.input();
 
-                Document output = toolExecutor.execute(toolName, input);
+                Document output = toolRunner.run(toolName, input);
 
-                // refresh draft after tool updates
+                // refresh draft after tool updates (local store may not change if tool is remote)
                 draft = store.getOrCreate(sessionId);
 
-                // send tool result back as a user message containing a toolResult block
                 messages.add(toolResultMsg(toolUseId, output));
             }
         }
@@ -113,11 +105,11 @@ public class LendingAgentService {
                 - Follow the application step shown in CONTEXT. Don't skip ahead.
                 - When the user provides data, call the appropriate update tool.
                 - If the user asks "where am I", call getApplicationStatus.
+                - If a tool returns status=ERROR or status=INCOMPLETE, explain what is missing and ask for the next required field.
                 """;
     }
 
     private String contextBlock(String sessionId, ApplicationDraft d) {
-        // Keep it simple + explicit. This is what “feeds info to the model”.
         return """
                 CONTEXT (authoritative, from backend):
                 sessionId=%s
@@ -155,17 +147,31 @@ public class LendingAgentService {
     }
 
     private Message toolResultMsg(String toolUseId, Document output) {
-        // ToolResult content can be text or structured; we’ll send JSON-ish text for readability.
-        // You can also return a DocumentBlock; keeping it simple for a spike.
-        String outText = output.toString();
+        String outText = output == null ? "null" : output.toString();
+        ToolResultStatus status = mapToolResultStatus(output);
 
         return Message.builder()
                 .role(ConversationRole.USER)
                 .content(ContentBlock.fromToolResult(tr -> tr
                         .toolUseId(toolUseId)
                         .content(ToolResultContentBlock.fromText(outText))
-                        .status(ToolResultStatus.SUCCESS)
+                        .status(status)
                 ))
                 .build();
+    }
+
+    private ToolResultStatus mapToolResultStatus(Document output) {
+        try {
+            if (output == null || !output.isMap()) return ToolResultStatus.SUCCESS;
+            Map<String, Document> m = output.asMap();
+            Document s = m.get("status");
+            if (s == null || !s.isString()) return ToolResultStatus.SUCCESS;
+
+            String status = s.asString();
+            if ("ERROR".equalsIgnoreCase(status)) return ToolResultStatus.ERROR;
+            return ToolResultStatus.SUCCESS; // INCOMPLETE still counts as SUCCESS for tool execution
+        } catch (Exception ignored) {
+            return ToolResultStatus.SUCCESS;
+        }
     }
 }
