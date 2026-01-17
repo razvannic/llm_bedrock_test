@@ -1,4 +1,4 @@
-package local.dev.llm_bedrock_test.config;
+package local.dev.llm_bedrock_test.lending.config;
 
 
 import org.springframework.beans.factory.annotation.Value;

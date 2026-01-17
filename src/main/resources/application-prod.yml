@@ -1,0 +1,13 @@
+tools:
+  mode: lambda
+
+aws:
+  region: eu-central-1
+
+lambda:
+  functions:
+    getApplicationStatus: loan-getApplicationStatus #TODO get from here
+    updatePersonalDetails: loan-updatePersonalDetails
+    updateBusinessDetails: loan-updateBusinessDetails
+    updateFinancials: loan-updateFinancials
+    submitApplication: loan-submitApplication

@@ -1,6 +1,15 @@
 package local.dev.llm_bedrock_test.lending;
 
-import local.dev.llm_bedrock_test.lending.tools.*;
+import local.dev.llm_bedrock_test.lending.agent.LendingAgentService;
+import local.dev.llm_bedrock_test.lending.agent.ToolLoop;
+import local.dev.llm_bedrock_test.lending.state.ApplicationDraft;
+import local.dev.llm_bedrock_test.lending.state.DraftStore;
+import local.dev.llm_bedrock_test.lending.state.LendingStateReducer;
+import local.dev.llm_bedrock_test.lending.state.LendingStepPolicy;
+import local.dev.llm_bedrock_test.lending.tools.LendingToolExecutor;
+import local.dev.llm_bedrock_test.lending.tools.LendingToolRegistry;
+import local.dev.llm_bedrock_test.lending.tools.ToolInvoker;
+import local.dev.llm_bedrock_test.lending.tools.local.LocalToolInvoker;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import software.amazon.awssdk.core.document.Document;
@@ -9,22 +18,11 @@ import software.amazon.awssdk.services.bedrockruntime.model.*;
 
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static local.dev.llm_bedrock_test.lending.tools.ToolNames.UPDATE_PERSONAL;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 
 class LendingAgentServiceTest {
-
-    /*
-    Here you mock BedrockRuntimeClient and simulate a model response:
-
-    First converse() returns StopReason.TOOL_USE with a toolUse block.
-
-    Second converse() returns normal assistant text.
-
-    This tests:
-     “When model requests tool X, we execute it and continue”
-     “We return final text once tool calls are done”
-     */
 
     @Test
     void agentExecutesToolThenReturnsFinalText() {
@@ -32,25 +30,26 @@ class LendingAgentServiceTest {
 
         DraftStore store = new DraftStore();
         LendingToolRegistry registry = new LendingToolRegistry();
-//        LendingToolExecutor executor = new LendingToolExecutor(store);
-        ToolRunner toolRunner =  mock(ToolRunner.class);
+
+        // Real local tool path (updates DraftStore + step transitions)
         LendingStepPolicy stepPolicy = new LendingStepPolicy();
-        LendingStateReducer reducer = new LendingStateReducer();
+        LendingStateReducer reducer = new LendingStateReducer(); // if your reducer is used elsewhere, keep; executor already advances steps
+        LendingToolExecutor executor = new LendingToolExecutor(store, stepPolicy);
+        ToolInvoker toolInvoker = new LocalToolInvoker(executor);
+        ToolLoop toolLoop = new ToolLoop(toolInvoker);
 
         LendingAgentService agent = new LendingAgentService(
                 bedrock,
                 "dummy-model",
                 registry,
-                toolRunner,
-                reducer,
-                stepPolicy,
+                toolLoop,
                 store
         );
 
-        // 1) First response: TOOL_USE (updatePersonalDetails)
+        // 1) First response: TOOL_USE
         ToolUseBlock toolUse = ToolUseBlock.builder()
                 .toolUseId("tu-1")
-                .name(LendingToolRegistry.UPDATE_PERSONAL)
+                .name(UPDATE_PERSONAL)
                 .input(Document.fromMap(Map.of(
                         "sessionId", Document.fromString("s1"),
                         "firstName", Document.fromString("Razvan"),
@@ -76,7 +75,7 @@ class LendingAgentServiceTest {
                 .build();
 
         ConverseResponse second = ConverseResponse.builder()
-                .stopReason(StopReason.END_TURN) // or null depending on SDK behavior; END_TURN is fine
+                .stopReason(StopReason.END_TURN)
                 .output(ConverseOutput.builder().message(assistantFinal).build())
                 .build();
 
@@ -84,12 +83,11 @@ class LendingAgentServiceTest {
                 .thenReturn(first)
                 .thenReturn(second);
 
-
-        String reply = agent.chat("s1", "Hi, I need a business loan. My name is Razvan Nicolae, email razvan@test.com");
+        String reply = agent.chat("s1", "Hi, I need a business loan.");
 
         assertEquals("Thanks — now tell me your company name.", reply);
 
-        // Verify backend state progressed due to tool execution
+        // Verify state progressed (because LocalToolInvoker->Executor updated DraftStore)
         ApplicationDraft d = store.getOrCreate("s1");
         assertEquals(ApplicationDraft.Step.BUSINESS_DETAILS, d.getStep());
         assertEquals("Razvan", d.getFirstName());

@@ -1,7 +1,9 @@
-package local.dev.llm_bedrock_test.lending;
+package local.dev.llm_bedrock_test.lending.agent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import local.dev.llm_bedrock_test.lending.state.ApplicationDraft;
+import local.dev.llm_bedrock_test.lending.state.DraftStore;
 import local.dev.llm_bedrock_test.lending.tools.LendingToolRegistry;
-import local.dev.llm_bedrock_test.lending.tools.ToolRunner;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.document.Document;
@@ -19,28 +21,21 @@ public class LendingAgentService {
     private final BedrockRuntimeClient bedrock;
     private final String modelId;
     private final LendingToolRegistry toolRegistry;
-    private final ToolRunner toolRunner;
-    private final LendingStateReducer reducer;
-    //private final LendingToolExecutor toolExecutor; - used for local tools
-    private final LendingStepPolicy stepPolicy;
+    private final ToolLoop toolLoop;
     private final DraftStore store;
+    private final ObjectMapper om = new ObjectMapper();
 
     public LendingAgentService(
             BedrockRuntimeClient bedrock,
             @Value("${bedrock.modelId}") String modelId,
             LendingToolRegistry toolRegistry,
-            //            LendingToolExecutor toolExecutor,
-            ToolRunner toolRunner,
-            LendingStateReducer reducer,
-            LendingStepPolicy stepPolicy,
+            ToolLoop toolLoop,
             DraftStore store
     ) {
         this.bedrock = bedrock;
         this.modelId = modelId;
         this.toolRegistry = toolRegistry;
-        this.toolRunner = toolRunner;
-        this.reducer = reducer;
-        this.stepPolicy = stepPolicy;
+        this.toolLoop = toolLoop;
         this.store = store;
     }
 
@@ -55,7 +50,7 @@ public class LendingAgentService {
                 .toolChoice(ToolChoice.fromAuto(AutoToolChoice.builder().build()))
                 .build();
 
-        int maxTurns = 5;
+        int maxTurns = 6; // slightly higher now that status spam is limited
 
         for (int i = 0; i < maxTurns; i++) {
             String context = contextBlock(sessionId, draft);
@@ -79,33 +74,15 @@ public class LendingAgentService {
                         .orElse("(no text)");
             }
 
-            // TOOL_USE: execute each tool request
-            for (ContentBlock block : assistant.content()) {
-                if (block.toolUse() == null) continue;
+            // Execute tool calls via ToolLoop
+            toolLoop.handleToolUse(
+                    assistant,
+                    messages,
+                    this::toolResultMsg
+            );
 
-                ToolUseBlock toolUse = block.toolUse();
-                String toolName = toolUse.name();
-                String toolUseId = toolUse.toolUseId();
-                Document input = toolUse.input();
-
-                System.out.println("TOOL_USE: " + toolName + " input=" + input);
-                System.out.println("DRAFT BEFORE: step=" + draft.getStep() + " fields=" + contextBlock(sessionId, draft));
-
-                Document output = toolRunner.run(toolName, input);
-
-                //adjust state information in the application draft
-                mirrorStateIntoSpring(toolName, input);
-
-                // refresh draft after tool updates (local store may not change if tool is remote)
-                draft = store.getOrCreate(sessionId);
-
-                // advance step based on updated draft
-                reducer.advanceStepIfPossible(draft);
-
-                System.out.println("DRAFT AFTER: step=" + draft.getStep() + " fields=" + contextBlock(sessionId, draft));
-
-                messages.add(toolResultMsg(toolUseId, output));
-            }
+            // Refresh local state after tool execution(s)
+            draft = store.getOrCreate(sessionId);
         }
 
         return "Sorry — I hit a tool loop limit. Please try again.";
@@ -123,6 +100,20 @@ public class LendingAgentService {
                 - When the user provides data, call the appropriate update tool.
                 - If the user asks "where am I", call getApplicationStatus.
                 - If a tool returns status=ERROR or status=INCOMPLETE, explain what is missing and ask for the next required field.
+
+                After any tool call, you MUST:
+                - Read the authoritative CONTEXT.currentStep and knownFields.
+                - Ask for the NEXT required field for that step (exactly one question).
+                - Never ask "What would you like to do next?"
+
+                Step guidance:
+                - PERSONAL_DETAILS: ask for firstName, then lastName, then email.
+                - BUSINESS_DETAILS: ask for companyName, then registrationId.
+                - FINANCIALS: ask for requestedAmount, then termMonths, then monthlyRevenue.
+                - REVIEW_SUBMIT: summarize collected data and ask "Do you want to submit?".
+                - SUBMITTED: confirm submission and next steps.
+
+                Do not call getApplicationStatus more than once in a single turn.
                 """;
     }
 
@@ -154,7 +145,9 @@ public class LendingAgentService {
         );
     }
 
-    private String safe(String s) { return s == null ? "null" : s; }
+    private String safe(String s) {
+        return s == null ? "null" : s;
+    }
 
     private Message userMsg(String text) {
         return Message.builder()
@@ -164,17 +157,44 @@ public class LendingAgentService {
     }
 
     private Message toolResultMsg(String toolUseId, Document output) {
-        String outText = output == null ? "null" : output.toString();
-        ToolResultStatus status = mapToolResultStatus(output);
+        ToolResultStatus resolvedStatus = mapToolResultStatus(output);
+        String resolvedJson;
+
+        try {
+            resolvedJson = om.writeValueAsString(toPlainJava(output));
+        } catch (Exception e) {
+            resolvedJson = "{\"status\":\"ERROR\",\"code\":\"TOOL_RESULT_SERIALIZE_FAILED\",\"message\":\"" +
+                    e.getMessage().replace("\"", "'") + "\"}";
+            resolvedStatus = ToolResultStatus.ERROR;
+        }
+
+        final String outJson = resolvedJson;
+        final ToolResultStatus status = resolvedStatus;
 
         return Message.builder()
                 .role(ConversationRole.USER)
                 .content(ContentBlock.fromToolResult(tr -> tr
                         .toolUseId(toolUseId)
-                        .content(ToolResultContentBlock.fromText(outText))
+                        .content(ToolResultContentBlock.fromText(outJson))
                         .status(status)
                 ))
                 .build();
+    }
+
+    private Object toPlainJava(Document d) {
+        if (d == null || d.isNull()) return null;
+        if (d.isString()) return d.asString();
+        if (d.isNumber()) return d.asNumber();
+        if (d.isBoolean()) return d.asBoolean();
+        if (d.isList()) return d.asList().stream().map(this::toPlainJava).toList();
+        if (d.isMap()) {
+            return d.asMap().entrySet().stream()
+                    .collect(java.util.stream.Collectors.toMap(
+                            Map.Entry::getKey,
+                            e -> toPlainJava(e.getValue())
+                    ));
+        }
+        return d.toString();
     }
 
     private ToolResultStatus mapToolResultStatus(Document output) {
@@ -186,63 +206,9 @@ public class LendingAgentService {
 
             String status = s.asString();
             if ("ERROR".equalsIgnoreCase(status)) return ToolResultStatus.ERROR;
-            return ToolResultStatus.SUCCESS; // INCOMPLETE still counts as SUCCESS for tool execution
+            return ToolResultStatus.SUCCESS;
         } catch (Exception ignored) {
             return ToolResultStatus.SUCCESS;
         }
     }
-
-    private void mirrorStateIntoSpring(String toolName, Document input) {
-        if (input == null || !input.isMap()) return;
-        var m = input.asMap();
-        String sessionId = getString(m, "sessionId");
-        if (sessionId == null) return;
-
-        ApplicationDraft d = store.getOrCreate(sessionId);
-        if (!stepPolicy.isToolAllowed(d.getStep(), toolName)) {
-            // Strict: do not apply changes to state if tool out of order
-            return;
-        }
-
-        switch (toolName) {
-            case LendingToolRegistry.UPDATE_PERSONAL -> {
-                String firstName = getString(m, "firstName");
-                String lastName = getString(m, "lastName");
-                String email = getString(m, "email");
-                if (firstName != null) d.setFirstName(firstName);
-                if (lastName != null) d.setLastName(lastName);
-                if (email != null) d.setEmail(email);
-            }
-            case LendingToolRegistry.UPDATE_BUSINESS -> {
-                String companyName = getString(m, "companyName");
-                String registrationId = getString(m, "registrationId");
-                if (companyName != null) d.setCompanyName(companyName);
-                if (registrationId != null) d.setRegistrationId(registrationId);
-            }
-            case LendingToolRegistry.UPDATE_FINANCIALS -> {
-                if (m.get("requestedAmount") != null && m.get("requestedAmount").isNumber()) {
-                    d.setRequestedAmount(new java.math.BigDecimal(m.get("requestedAmount").asNumber().toString()));
-                }
-                if (m.get("termMonths") != null && m.get("termMonths").isNumber()) {
-                    d.setTermMonths((int) m.get("termMonths").asNumber().longValue());
-                }
-                if (m.get("monthlyRevenue") != null && m.get("monthlyRevenue").isNumber()) {
-                    d.setMonthlyRevenue(new java.math.BigDecimal(m.get("monthlyRevenue").asNumber().toString()));
-                }
-            }
-            case LendingToolRegistry.SUBMIT -> {
-                // optional: mark submitted locally too
-                d.setStep(ApplicationDraft.Step.SUBMITTED);
-            }
-            default -> {
-                // do nothing
-            }
-        }
-    }
-
-    private String getString(java.util.Map<String, Document> m, String key) {
-        Document v = m.get(key);
-        return (v != null && v.isString()) ? v.asString() : null;
-    }
-
 }

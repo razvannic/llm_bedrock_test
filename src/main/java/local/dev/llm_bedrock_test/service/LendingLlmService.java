@@ -1,7 +1,7 @@
 package local.dev.llm_bedrock_test.service;
 
 
-import local.dev.llm_bedrock_test.lending.LendingAgentService;
+import local.dev.llm_bedrock_test.lending.agent.LendingAgentService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 

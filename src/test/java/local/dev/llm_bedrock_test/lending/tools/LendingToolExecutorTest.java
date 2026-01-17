@@ -1,14 +1,15 @@
 package local.dev.llm_bedrock_test.lending.tools;
 
-import local.dev.llm_bedrock_test.lending.ApplicationDraft;
-import local.dev.llm_bedrock_test.lending.DraftStore;
-import local.dev.llm_bedrock_test.lending.LendingStepPolicy;
+import local.dev.llm_bedrock_test.lending.state.ApplicationDraft;
+import local.dev.llm_bedrock_test.lending.state.DraftStore;
+import local.dev.llm_bedrock_test.lending.state.LendingStepPolicy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.core.document.Document;
 
 import java.util.Map;
 
+import static local.dev.llm_bedrock_test.lending.tools.ToolNames.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /*
@@ -38,7 +39,7 @@ class LendingToolExecutorTest {
                 "email", Document.fromString("razvan@test.com")
         ));
 
-        Document out = exec.execute(LendingToolRegistry.UPDATE_PERSONAL, input);
+        Document out = exec.execute(UPDATE_PERSONAL, input);
 
         ApplicationDraft draft = store.getOrCreate(sessionId);
         assertEquals(ApplicationDraft.Step.BUSINESS_DETAILS, draft.getStep());
@@ -59,7 +60,7 @@ class LendingToolExecutorTest {
                 "registrationId", Document.fromString("RO123456")
         ));
 
-        exec.execute(LendingToolRegistry.UPDATE_BUSINESS, input);
+        exec.execute(UPDATE_BUSINESS, input);
 
         assertEquals(ApplicationDraft.Step.FINANCIALS, d.getStep());
     }
@@ -74,7 +75,7 @@ class LendingToolExecutorTest {
                 "sessionId", Document.fromString(sessionId)
         ));
 
-        Document out = exec.execute(LendingToolRegistry.SUBMIT, input);
+        Document out = exec.execute(SUBMIT, input);
 
         assertEquals("INCOMPLETE", out.asMap().get("status").asString());
         assertNotNull(out.asMap().get("missingFields"));
@@ -85,7 +86,7 @@ class LendingToolExecutorTest {
     void happyPath_fullSequence_endsSubmitted() {
         String sessionId = "s1";
 
-        exec.execute(LendingToolRegistry.UPDATE_PERSONAL, Document.fromMap(Map.of(
+        exec.execute(UPDATE_PERSONAL, Document.fromMap(Map.of(
                 "sessionId", Document.fromString(sessionId),
                 "firstName", Document.fromString("Razvan"),
                 "lastName", Document.fromString("Nicolae"),
@@ -93,14 +94,14 @@ class LendingToolExecutorTest {
         )));
         assertEquals(ApplicationDraft.Step.BUSINESS_DETAILS, store.getOrCreate(sessionId).getStep());
 
-        exec.execute(LendingToolRegistry.UPDATE_BUSINESS, Document.fromMap(Map.of(
+        exec.execute(UPDATE_BUSINESS, Document.fromMap(Map.of(
                 "sessionId", Document.fromString(sessionId),
                 "companyName", Document.fromString("ABC SRL"),
                 "registrationId", Document.fromString("RO123456")
         )));
         assertEquals(ApplicationDraft.Step.FINANCIALS, store.getOrCreate(sessionId).getStep());
 
-        exec.execute(LendingToolRegistry.UPDATE_FINANCIALS, Document.fromMap(Map.of(
+        exec.execute(UPDATE_FINANCIALS, Document.fromMap(Map.of(
                 "sessionId", Document.fromString(sessionId),
                 "requestedAmount", Document.fromNumber(50000),
                 "termMonths", Document.fromNumber(24),
@@ -108,7 +109,7 @@ class LendingToolExecutorTest {
         )));
         assertEquals(ApplicationDraft.Step.REVIEW_SUBMIT, store.getOrCreate(sessionId).getStep());
 
-        Document submitOut = exec.execute(LendingToolRegistry.SUBMIT, Document.fromMap(Map.of(
+        Document submitOut = exec.execute(SUBMIT, Document.fromMap(Map.of(
                 "sessionId", Document.fromString(sessionId)
         )));
         assertEquals("SUBMITTED", submitOut.asMap().get("status").asString());
@@ -128,7 +129,7 @@ class LendingToolExecutorTest {
                 "monthlyRevenue", Document.fromNumber(20000)
         ));
 
-        Document out = exec.execute(LendingToolRegistry.UPDATE_FINANCIALS, input);
+        Document out = exec.execute(UPDATE_FINANCIALS, input);
 
         assertEquals("ERROR", out.asMap().get("status").asString());
         assertEquals("STEP_VIOLATION", out.asMap().get("code").asString());
