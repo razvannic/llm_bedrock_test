@@ -1,0 +1,6 @@
+tools:
+  mode: local
+
+bedrock:
+  # in tests you might override modelId or stub bedrock client
+  modelId: "dummy"

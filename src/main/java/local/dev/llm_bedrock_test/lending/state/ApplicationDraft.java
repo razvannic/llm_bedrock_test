@@ -1,4 +1,4 @@
-package local.dev.llm_bedrock_test.lending;
+package local.dev.llm_bedrock_test.lending.state;
 
 import java.math.BigDecimal;
 import java.util.Objects;

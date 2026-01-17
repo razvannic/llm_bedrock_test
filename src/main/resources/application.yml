@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: llm_bedrock_test
+server:
+  port: 8080
+
+aws:
+  region: ${AWS_REGION:eu-central-1}
+  profile: ${AWS_PROFILE:personal}
+
+bedrock:
+  modelId: ${BEDROCK_MODEL_ID:anthropic.claude-3-haiku-20240307-v1:0}
+  region: ${AWS_REGION:eu-central-1}
+  maxTokens: 256
+  temperature: 0.2
+  topP: 0.9
+
+llm:
+  mode: lending
+tools:
+  mode: lambda #lambda or local
+
+lambda:
+  functions:
+    getApplicationStatus: loan-getApplicationStatus
+    updatePersonalDetails: loan-updatePersonalDetails
+    updateBusinessDetails: loan-updateBusinessDetails
+    updateFinancials: loan-updateFinancials
+    submitApplication: loan-submitApplication

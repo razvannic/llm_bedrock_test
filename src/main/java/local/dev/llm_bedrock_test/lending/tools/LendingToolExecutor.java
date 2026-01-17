@@ -1,8 +1,8 @@
 package local.dev.llm_bedrock_test.lending.tools;
 
-import local.dev.llm_bedrock_test.lending.ApplicationDraft;
-import local.dev.llm_bedrock_test.lending.DraftStore;
-import local.dev.llm_bedrock_test.lending.LendingStepPolicy;
+import local.dev.llm_bedrock_test.lending.state.ApplicationDraft;
+import local.dev.llm_bedrock_test.lending.state.DraftStore;
+import local.dev.llm_bedrock_test.lending.state.LendingStepPolicy;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.core.document.Document;
 
@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import static local.dev.llm_bedrock_test.lending.tools.ToolNames.*;
 
 @Component
 public class LendingToolExecutor {
@@ -44,11 +46,11 @@ public class LendingToolExecutor {
         }
 
         return switch (toolName) {
-            case LendingToolRegistry.GET_STATUS -> getStatus(draft);
-            case LendingToolRegistry.UPDATE_PERSONAL -> updatePersonal(draft, m);
-            case LendingToolRegistry.UPDATE_BUSINESS -> updateBusiness(draft, m);
-            case LendingToolRegistry.UPDATE_FINANCIALS -> updateFinancials(draft, m);
-            case LendingToolRegistry.SUBMIT -> submit(draft);
+            case GET_STATUS -> getStatus(draft);
+            case UPDATE_PERSONAL -> updatePersonal(draft, m);
+            case UPDATE_BUSINESS -> updateBusiness(draft, m);
+            case UPDATE_FINANCIALS -> updateFinancials(draft, m);
+            case SUBMIT -> submit(draft);
             default -> Document.mapBuilder()
                     .putString("status", "ERROR")
                     .putString("message", "Unknown tool: " + toolName)
